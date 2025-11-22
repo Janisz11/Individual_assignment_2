@@ -1,0 +1,304 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+
+\title{Matrix Multiplication Performance Analysis}
+\author{Kacper Janiszewski\\[4pt]
+\small GitHub repo: \href{https://github.com/Janisz11/Individual_assignment_2}{\texttt{github.com/Janisz11/Individual\_assignment\_2}}}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Report (Section 2.2)}
+
+\subsection{Experimental Setup}
+
+All experiments were implemented in C++17 and compiled with:
+\begin{verbatim}
+g++ -O3 -march=native -std=c++17
+\end{verbatim}
+
+Execution time was measured using \texttt{std::chrono::high\_resolution\_clock}.
+
+We define an algorithm as \emph{efficient} if its runtime is less than or equal to
+\[
+120\,000 \text{ ms} = 120 \text{ s} = 2 \text{ minutes}.
+\]
+
+We consider the following dense algorithms:
+\begin{itemize}
+    \item \textbf{Baseline}: classical dense $O(n^3)$ matrix multiplication using three nested loops over rows, columns and the shared dimension.
+    \item \textbf{Optimized \#1 (Transposed-B)}: the same $O(n^3)$ algorithm, but with matrix $B$ pre-transposed to improve cache locality when accessing columns of $B$.
+    \item \textbf{Optimized \#2 (Blocked)}: dense $O(n^3)$ multiplication with cache blocking (tiling), operating on sub-blocks that fit better into CPU caches.
+\end{itemize}
+
+For sparse matrices, we use the CSR (Compressed Sparse Row) format and implement sparse--dense matrix multiplication (SpMM).
+
+\subsection{Execution Time and Maximum Matrix Size (Dense)}
+
+We benchmarked the three dense implementations for square matrices of sizes
+\[
+N \in \{128, 256, 512, 1024, 2048, 4096\}.
+\]
+
+The following table shows the measured execution times (in milliseconds). The speedup in parentheses is computed relative to the baseline at the same matrix size.
+For $N = 4096$ the baseline time is only estimated from cubic scaling; it was not executed to avoid an excessively long run.
+
+\begin{table}[h]
+    \centering
+    \caption{Execution time of dense algorithms (in ms) and speedup versus baseline.}
+    \label{tab:dense-times}
+    \begin{tabular}{r|r|r|r}
+        \toprule
+        $N$ & Baseline & Transposed-B & Blocked \\
+        \midrule
+        128  & 1.28   & 0.84 (1.52$\times$)  & 0.34 (3.73$\times$)  \\
+        256  & 10.66  & 8.33 (1.28$\times$)  & 3.21 (3.33$\times$)  \\
+        512  & 366.48 & 79.72 (4.60$\times$) & 36.01 (10.18$\times$) \\
+        1024 & 5432.77 & 693.78 (7.83$\times$) & 268.10 (20.26$\times$) \\
+        2048 & 60882.36 & 6535.71 (9.32$\times$) & 2297.38 (26.50$\times$) \\
+        4096 & $\approx 487058.87$ (est.) & 52285.37 (9.32$\times$ est.) & 16180.11 (30.10$\times$ est.) \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Figure~\ref{fig:dense-plot} illustrates these results graphically.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.7\textwidth]{plots/dense_time_vs_N.png}
+    \caption{Dense matrix multiplication: runtime vs.\ matrix size $N$.}
+    \label{fig:dense-plot}
+\end{figure}
+
+\paragraph{Observations}
+
+For small matrices, all three methods are fast, though the blocked algorithm is already approximately $3$--$4\times$ faster than the baseline.
+As $N$ grows, the differences increase significantly. For $N = 2048$:
+\begin{itemize}
+    \item The transposed-B version is approximately $9.3\times$ faster than the baseline.
+    \item The blocked algorithm is approximately $26.5\times$ faster than the baseline.
+\end{itemize}
+Both optimized methods clearly improve cache behavior and reduce the effective cost of the $O(n^3)$ computation.
+
+For $N = 4096$, the baseline time was only estimated to be around $487$ seconds ($\approx 8.1$ minutes), so it was not executed in practice. The optimized algorithms were executed and remained well below the $2$-minute threshold.
+
+\subsubsection{Maximum Matrix Size Handled Efficiently (Dense)}
+
+Using the $2$-minute threshold ($120\,000$ ms) as the efficiency criterion:
+\begin{itemize}
+    \item \textbf{Baseline:} For $N = 2048$, the baseline takes $\approx 60\,882$ ms, which is still below the $2$-minute threshold and is considered efficient at this size.
+          For $N = 4096$, the estimated time ($\approx 487\,058$ ms) clearly exceeds the time budget, so the baseline algorithm is no longer efficient.
+          The maximum tested efficient size is therefore
+          \[
+          N_{\text{max, baseline}} = 2048.
+          \]
+    \item \textbf{Transposed-B:} At $N = 2048$, the transposed-B method requires about $6\,536$ ms, and at $N = 4096$ it still remains efficient with $\approx 52\,285$ ms, which is below $2$ minutes.
+          Within the tested range, the maximum efficient size is
+          \[
+          N_{\text{max, transposed}} = 4096.
+          \]
+    \item \textbf{Blocked:} At $N = 2048$, the blocked algorithm runs in about $2\,297$ ms, and at $N = 4096$ in about $16\,180$ ms, with a very large margin with respect to the $2$-minute threshold.
+          Within the tested range, the maximum efficient size is
+          \[
+          N_{\text{max, blocked}} = 4096.
+          \]
+\end{itemize}
+
+Under the chosen $2$-minute threshold, all three dense algorithms can handle matrices up to $2048 \times 2048$, but only the optimized implementations remain efficient even at $4096 \times 4096$.
+
+\subsection{Sparse Matrices: Synthetic CSR versus Dense (Different Sparsity Levels)}
+
+To study the impact of sparsity, we fixed the matrix size at $N = 1000$ and varied the density of non-zero entries in matrix $A$ across
+\[
+\{1\%, 5\%, 10\%, 20\%, 50\%\}.
+\]
+For each density, we compared:
+\begin{itemize}
+    \item the dense baseline ($A_{\text{dense}} \cdot B_{\text{dense}}$),
+    \item the CSR-based sparse--dense multiplication ($A_{\text{CSR}} \cdot B_{\text{dense}}$).
+\end{itemize}
+
+The following table summarizes the execution times and speedups.
+
+\begin{table}[h]
+    \centering
+    \caption{Synthetic sparse matrix ($N = 1000$): dense versus CSR for different densities.}
+    \label{tab:sparse-times}
+    \begin{tabular}{r|r|r|r|r}
+        \toprule
+        Density & nnz & Dense [ms] & CSR [ms] & Speedup \\
+        \midrule
+        1\%  & 9\,926   & 871.86 & 2.85  & 306.07$\times$ \\
+        5\%  & 49\,960  & 821.94 & 10.87 & 75.59$\times$ \\
+        10\% & 99\,822  & 794.83 & 18.83 & 42.22$\times$ \\
+        20\% & 199\,458 & 796.65 & 47.85 & 16.65$\times$ \\
+        50\% & 499\,387 & 781.25 & 109.08 & 7.16$\times$ \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Figure~\ref{fig:sparse-plot} shows the corresponding runtime curves as a function of density.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.7\textwidth]{plots/sparse_time_vs_density.png}
+    \caption{Sparse vs.\ dense runtime for $N = 1000$ as a function of density (percentage of non-zeros).}
+    \label{fig:sparse-plot}
+\end{figure}
+
+\paragraph{Performance Comparison and Sparsity Effect}
+
+The dense baseline performs approximately $N^3$ operations independent of the number of zeros, so its runtime is nearly constant across densities.
+In contrast, the CSR-based method performs work proportional to the number of non-zero entries (nnz), so its runtime increases as the matrix becomes denser.
+
+As a consequence:
+\begin{itemize}
+    \item For highly sparse matrices ($1\%$ density, approximately $99\%$ zeros), CSR is about $306\times$ faster than the dense baseline.
+    \item For moderately sparse matrices ($50\%$ density), CSR is still about $7\times$ faster, although the advantage is smaller.
+\end{itemize}
+
+This confirms that the sparsity level has a strong impact on performance: the sparser the matrix, the more beneficial CSR-based computation becomes.
+Under the $2$-minute threshold, both dense and CSR methods are efficient for $N = 1000$, but CSR is clearly preferable for highly sparse matrices.
+
+\subsection{Real Sparse Matrix: \texttt{mc2depi} (SuiteSparse)}
+
+We also evaluated a real-world sparse matrix from the SuiteSparse collection, \texttt{mc2depi}, with the following properties:
+\begin{itemize}
+    \item Size: $525\,825 \times 525\,825$,
+    \item Number of non-zero entries: $\mathrm{nnz} = 2\,100\,225$,
+    \item Density: approximately $\dfrac{2\,100\,225}{525\,825^2} \approx 0.00076\%$, or approximately $99.99924\%$ zeros.
+\end{itemize}
+
+We loaded \texttt{mc2depi.mtx} in Matrix Market format into a CSR structure and performed sparse matrix--dense matrix multiplication:
+\[
+C = A \cdot B,
+\]
+where:
+\begin{itemize}
+    \item $A$ is the \texttt{mc2depi} matrix in CSR format ($525\,825 \times 525\,825$),
+    \item $B$ is a dense matrix of size $525\,825 \times 16$,
+    \item $C$ is the dense result of size $525\,825 \times 16$.
+\end{itemize}
+
+The measured results were:
+\begin{itemize}
+    \item Load time (parsing the Matrix Market file into CSR): $\approx 5\,785.27$ ms,
+    \item Best SpMM runtime (over $3$ runs): $\approx 13.33$ ms,
+    \item Approximate throughput: $\approx 5.04$ GFLOP/s (using $2 \cdot \mathrm{nnz} \cdot 16$ floating-point operations).
+\end{itemize}
+
+\paragraph{Feasibility of Dense Representation}
+
+A dense $525\,825 \times 525\,825$ matrix of double-precision values would require
+\[
+525\,825^2 \cdot 8 \text{ bytes} \approx 2.0 \text{ TB}
+\]
+of memory for a single matrix $A$.
+Storing $A$, $B$, and $C$ densely would require approximately $6$ TB of RAM, which is far beyond the capacity of a typical workstation.
+In contrast, the CSR representation of $A$ requires only $O(\mathrm{nnz})$ storage and fits easily into main memory.
+
+For \texttt{mc2depi}, dense matrix multiplication is practically infeasible, while sparse CSR-based multiplication completes in milliseconds.
+This experiment illustrates that for extremely sparse, very large matrices, sparse representations are not just faster but the only viable choice.
+
+\subsection{Memory Usage}
+
+\subsubsection{Dense Matrices}
+
+For an $N \times N$ dense matrix of double-precision values, the memory footprint is $8N^2$ bytes.
+The dense algorithms simultaneously store at least three matrices ($A$, $B$, $C$), so the total size is approximately $24N^2$ bytes.
+Approximate memory usage for $N \in \{128, 256, 512, 1024, 2048\}$ is shown in Table~\ref{tab:dense-memory}.
+
+\begin{table}[h]
+    \centering
+    \caption{Approximate memory usage for three dense $N \times N$ matrices ($A$, $B$, $C$).}
+    \label{tab:dense-memory}
+    \begin{tabular}{r|r}
+        \toprule
+        $N$ & Memory (A + B + C) \\
+        \midrule
+        128  & $\approx 0.38$ MB \\
+        256  & $\approx 1.50$ MB \\
+        512  & $\approx 6.00$ MB \\
+        1024 & $\approx 24.00$ MB \\
+        2048 & $\approx 96.00$ MB \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+The transposed-B algorithm stores an additional $N^2$ doubles for the transposed matrix $B^T$, so at $N = 2048$, the total memory for dense matrices reaches approximately $128$ MB, which remains acceptable for a modern machine.
+
+\subsubsection{Synthetic Sparse Matrices ($N = 1000$)}
+
+For $N = 1000$, the dense baseline uses three dense matrices, requiring
+\[
+3 \cdot 1000^2 \cdot 8 \text{ bytes} = 24 \text{ MB}.
+\]
+
+The CSR storage for $A$ consists of:
+\begin{itemize}
+    \item \texttt{values}: a double for each non-zero entry,
+    \item \texttt{col\_index}: an integer for each non-zero entry,
+    \item \texttt{row\_ptr}: an integer per row plus one.
+\end{itemize}
+
+For $N = 1000$, the row pointer overhead is negligible.
+The approximate storage for $A$ in CSR is dominated by $\mathrm{nnz} \cdot (8 + 4)$ bytes.
+For the tested densities:
+\begin{itemize}
+    \item $1\%$ (nnz $\approx 9\,926$): $\approx 0.12$ MB,
+    \item $5\%$ (nnz $\approx 49\,960$): $\approx 0.58$ MB,
+    \item $10\%$ (nnz $\approx 99\,822$): $\approx 1.15$ MB,
+    \item $20\%$ (nnz $\approx 199\,458$): $\approx 2.29$ MB,
+    \item $50\%$ (nnz $\approx 499\,387$): $\approx 5.72$ MB.
+\end{itemize}
+
+CSR therefore reduces the memory footprint of $A$ by roughly an order of magnitude (or more) compared to the dense representation, especially at low densities.
+
+\subsubsection{Real Sparse Matrix \texttt{mc2depi}}
+
+For \texttt{mc2depi}:
+\begin{itemize}
+    \item Dense $A$ alone would require $\approx 2.0$ TB of memory,
+    \item CSR $A$ requires only on the order of tens of MB,
+    \item The dense matrices $B$ and $C$ of size $525\,825 \times 16$ require $525\,825 \cdot 16 \cdot 8 \approx 67.2$ MB each.
+\end{itemize}
+
+The total memory for sparse SpMM (CSR $A$, dense $B$ and $C$) is around $160$ MB, which is easily manageable on a typical machine.
+This highlights the dramatic memory savings of sparse representations for large, sparse problems.
+
+\subsection{Observed Bottlenecks and Performance Issues}
+
+\subsubsection{Dense Algorithms}
+
+The main observations for dense algorithms are:
+\begin{itemize}
+    \item The baseline implementation suffers from poor cache locality when accessing columns of $B$, leading to rapid runtime growth as $N$ increases.
+          For $N = 2048$, the cost is already above $60$ seconds and grows quickly beyond that.
+    \item The transposed-B algorithm improves spatial locality by storing $B^T$, so both $A$ and $B^T$ are accessed row-wise. This reduces cache misses and yields a consistent $7$--$10\times$ speedup for large matrices.
+    \item The blocked algorithm further increases cache reuse by operating on sub-blocks that fit into cache. Its runtime grows much more slowly with $N$, but for very large sizes it becomes limited by memory bandwidth and the cost of streaming data through the memory hierarchy.
+\end{itemize}
+
+\subsubsection{Sparse Algorithms}
+
+For sparse (CSR) algorithms:
+\begin{itemize}
+    \item For synthetic sparse matrices, the dense baseline pays the full $O(N^3)$ cost regardless of the number of zeros, so it becomes inefficient as soon as the matrix is significantly sparse.
+    \item The CSR algorithm performs work proportional to $\mathrm{nnz}$, and its runtime is mostly bounded by memory bandwidth: reading the \texttt{values} and \texttt{col\_index} arrays and updating the output.
+    \item For \texttt{mc2depi}, the dominant cost is actually I/O and parsing of the Matrix Market file (several seconds), not the SpMM computation itself (about $13$ ms). Dense multiplication is infeasible due to memory capacity constraints, so the limiting factor for dense methods is RAM, while the sparse method remains inexpensive.
+\end{itemize}
+
+\subsection{Summary}
+
+The experiments demonstrate that:
+\begin{itemize}
+    \item For moderately large dense matrices, cache-optimized algorithms (transposed-B and blocked) are essential to achieve acceptable performance and to scale up to $N \approx 4000$ within the $2$-minute time budget.
+    \item For large and highly sparse matrices, sparse formats such as CSR are mandatory, dramatically reducing both runtime and memory usage and enabling problems that are completely infeasible with dense representations.
+\end{itemize}
+
+\end{document}
